@@ -1,19 +1,16 @@
 #include "pitches.h"
-#include "IRLremote.h"
 #include <EEPROM.h>
-
-
-
+#include "GyverButton.h"
 
 // Базовые настройки по умолчанию
-int key_tone = tones[35]; //тон для бузера самоконтроля. ноты идут по порядку согласно известным законам. По дефолту 440 (ля 4й октавы).
-byte key_speed = 100; //скорость в минус первой степени, она же длительность точки
-
 const int key_pin = 10; //пин, на который пойдёт + при воспроизведении
 const int dot_paddle = 3; //пин левого лепестка
 const int dash_paddle = 4; //пин правого лепестка
 const int buzzer_pin = 9; //пин бузера самоконтроля
-#define ir_pin 2 //пин ик-пульта. Ну а чо? энкодер не всегда в наличии, а пультов и приёмников у всех пачка есть!
+const int button_pin = 12; //Кнопка для настроек. из пина в землю!
+
+int key_tone = tones[35]; //тон для бузера самоконтроля. ноты идут по порядку согласно известным законам. По дефолту 440 (ля 4й октавы).
+byte key_speed = 100; //скорость в минус первой степени, она же длительность точки
 
 bool self_control = true; // включить буззер самоконтроля? тру или фолс
 bool keying = true; // тру - режим ключа, фолс - "только писк", тренировка или чо там 
@@ -32,33 +29,20 @@ bool settings_mode = false; //флаг режима настроек ключа
 //Переменная, которая распознаёт коды
 String symbol_code = "";
 
-//Переменная для номера тона буззера
+//Переменная для номера тона буззера, номер элемента из файла pitches.
 byte tone_num;
 
-//кнопки на пульте и их коды
-#define BUTT_UP     0xE51CA6AD
-#define BUTT_DOWN   0xD22353AD
-#define BUTT_LEFT   0x517068AD
-#define BUTT_RIGHT  0xAC2A56AD
-#define BUTT_OK     0x1B92DDAD
-#define BUTT_1      0x68E456AD
-#define BUTT_2      0xF08A26AD
-#define BUTT_3      0x151CD6AD
-#define BUTT_4      0x18319BAD
-#define BUTT_5      0xF39EEBAD
-#define BUTT_6      0x4AABDFAD
-#define BUTT_7      0xE25410AD
-#define BUTT_8      0x297C76AD
-#define BUTT_9      0x14CE54AD
-#define BUTT_0      0xC089F6AD
-#define BUTT_STAR   0xAF3F1BAD
-#define BUTT_HASH   0x38379AD
 
-//магия для ик-пульта...
-CHashIR IRLremote;
-uint32_t IRdata;
+// флаг " ключ в режиме настройки". Нужен для работы кнопки
+bool flag_config = false;
+bool flag_speed = false;
+bool flag_tone = false;
+bool flag_buzzkey = false;
 
 
+
+//Запускаем кнопульку...
+GButton butt1(button_pin);
 
 
 
@@ -70,12 +54,18 @@ void setup() {
 
   //А теперь прочтём данные из постоянной памяти и используем их, если они есть.
   tone_num = int(EEPROM.read(10));
-  key_tone = tones[tone_num]; // ТОн буззера
+  key_tone = tones[tone_num]; // Тон буззера
   key_speed = int(EEPROM.read(20)); // Скорость ключевания
-
+  
   Serial.begin(9600);
-  IRLremote.begin(ir_pin);
-  Serial.println("ИК-пульт вроде настроен...");
+
+  
+  butt1.setDebounce(30);        // настройка антидребезга (по умолчанию 80 мс)
+  butt1.setTimeout(300);        // настройка таймаута на удержание (по умолчанию 500 мс)
+  butt1.setClickTimeout(600);   // настройка таймаута между кликами (по умолчанию 300 мс)
+  butt1.setType(HIGH_PULL);
+  butt1.setDirection(NORM_OPEN);
+  Serial.println("Кнопка настройки запилена...");
   Serial.print("Тональность ключа ");
   Serial.print(key_tone);
   Serial.println(" Гц...");
@@ -89,7 +79,7 @@ void setup() {
 
 void dot() {
   if (keying) {digitalWrite(key_pin, 1);}
-  if (keying) {tone(buzzer_pin, key_tone);}
+  if (self_control) {tone(buzzer_pin, key_tone);}
   delay(key_speed);
   if (keying) {digitalWrite(key_pin, 0);}
   noTone(buzzer_pin);
@@ -99,7 +89,7 @@ void dot() {
 
 void dash() {
   if (keying) {digitalWrite(key_pin, 1);}
-  if (keying) {tone(buzzer_pin, key_tone);}
+  if (self_control) {tone(buzzer_pin, key_tone);}
   delay(key_speed*3);
   if (keying) {digitalWrite(key_pin, 0);}
   noTone(buzzer_pin);
@@ -118,6 +108,67 @@ void play_pause() {
 
 
 void loop() {
+  
+//////////////////////////////////////////////////
+//// Тут проверяется и происходит настройка //////
+//////////////////////////////////////////////////
+
+  if (settings_mode == true) {
+      settings();
+  }
+
+  // Переход в настройки, если мы в обычном режиме.
+  else if (butt1.isHold() && settings_mode == false) {
+
+  //Перечитаем для начала еепром
+    tone_num = int(EEPROM.read(10));
+    key_tone = tones[tone_num]; // ТОн буззера
+    key_speed = int(EEPROM.read(20)); // Скорость ключевания
+    self_control = true; //Включаем буззер, ибо как ещё понять, чо там где?
+    keying = false; // Отключаем ключевание. Зачем в эфир гадить? =)
+    Serial.println("Переходим в настройки");
+    settings_mode = true;
+    for (int i=6; i<70; i++) {
+      tone(buzzer_pin,tones[i]);
+      delay (8);
+    }
+    noTone(buzzer_pin);
+    delay (300);
+  }
+
+    //поднимаем флаги по кнопке
+    if (butt1.isSingle()) {
+      flag_speed = true;
+      flag_tone = false;
+      noTone(buzzer_pin);
+      flag_buzzkey = false;
+      Serial.println("Настройка скорости");
+    }
+    if (butt1.isDouble()) {
+      flag_speed = false;
+      flag_tone = true;
+      flag_buzzkey = false;
+      Serial.println("Настройка тона самоконтроля");
+      }
+    if (butt1.isTriple()) {
+      flag_speed = false;
+      flag_tone = false;
+      flag_buzzkey = true;
+      Serial.println("Настройка интерфейсов - передача вкл/выкл, самоконтроль вкл/выкл");
+      }
+      /*
+   //Отладочная инфа
+  Serial.print(flag_speed); 
+  Serial.print(flag_tone);
+  Serial.println(flag_buzzkey);
+      */
+
+//////////////////////////////////////////////////
+/////// Основной рабочий цикл. Ключевание ////////
+//////////////////////////////////////////////////
+
+if (settings_mode == false) {
+  
   if (digitalRead(dot_paddle) == LOW or digitalRead(dash_paddle) == LOW) {
     sent_flag = false;
     if (counter > key_speed*3) {
@@ -140,137 +191,24 @@ void loop() {
 
   }
   
-  if ((digitalRead(dot_paddle) == HIGH) and (digitalRead(dash_paddle) == HIGH)) {
-    stop_time = millis();
-    counter = stop_time - start_time;
-    if (counter > key_speed*3 and sent_flag == false) {
+  if (digitalRead(dot_paddle) == HIGH and digitalRead(dash_paddle) == HIGH) {  // если лепестки не тронуты
+    stop_time = millis(); // таймер в текущий момент
+    counter = stop_time - start_time; //считаем время с момента отпускания лепестков...
+    if (counter > key_speed*3 and sent_flag == false) { // если прошло три точки (как бы стандарт) и ничего не отправлялось ранее
       Serial.print(" : ");
       Serial.println(decode_it(symbol_code)); //декодируй набранное
-      sent_flag = true;
-      symbol_code = "";
+      sent_flag = true; // флаг отправки
+      symbol_code = ""; // сбрасываем в пустоту, чтоб не возникало косяков
 
     }
   }
-  remoteTick();
+}
+//////////////////////////////////////////////////
+////// Служебные тики сторонних библиотек ////////
+//////////////////////////////////////////////////
+  butt1.tick();
 }
 
-
-//Честно спизжено у Гайвера =)
-void remoteTick() {
-    auto data = IRLremote.read();
-    IRdata = data.command;
-    bool ir_flag = true;
-    bool eeprom_flag = false;
-
-  if (ir_flag) { // если данные пришли
-    switch (IRdata) {
-      // режимы
-      
-      case BUTT_1:
-        break;
-        
-      case BUTT_2:
-        break;
-        
-      case BUTT_3:
-        break;
-        
-      case BUTT_4:
-        break;
-        
-      case BUTT_5:
-        break;
-        
-      case BUTT_6:
-        break;
-        
-      case BUTT_7:
-        break;
-        
-      case BUTT_8:
-        break;
-        
-      case BUTT_9: 
-        break;
-        
-      case BUTT_0: 
-        break;
-        
-      case BUTT_STAR: 
-        break;
-        
-      case BUTT_HASH:
-        break;
-        
-      case BUTT_OK: //updateEEPROM();
-        break;
-        
-      case BUTT_UP:
-        if (key_speed >= 55){ 
-          key_speed = key_speed - 5;
-          Serial.println("");
-          Serial.print("Скорость увеличена, длительность точки теперь: ");
-          Serial.println(key_speed);
-          }
-         else {
-            //play_fail();
-            Serial.println("");
-            Serial.println("А ты сам-то угонисси? Давай без выебонов ;)");
-         }
-         EEPROM.write(20, byte(key_speed));
-         break;
-      case BUTT_DOWN:
-          if (key_speed <= 250){ 
-          key_speed = key_speed + 5;
-          Serial.println("");
-          Serial.print("Скорость уменьшена, длительность точки теперь: ");
-          Serial.println(key_speed);
-          }
-         else {
-            //play_fail();
-          Serial.println("");
-          Serial.println("Не дури, куда уж медленнее?");
-         }
-         EEPROM.write(20, byte(key_speed));
-         break;
-      case BUTT_LEFT:
-        if (tone_num < 1 ){ 
-          Serial.println("");
-          Serial.println("Воу-воу, инфразвука нам не нать!");
-          }
-         else {
-          tone_num--;
-          Serial.print("Сейчас частота буззера в герцах: ");
-          Serial.println(tones[tone_num]);
-         }
-         EEPROM.write(10, byte(tone_num));
-         key_tone = tones[tone_num];
-         tone(buzzer_pin, key_tone);
-         delay(key_speed*3);
-         noTone(buzzer_pin);
-         break;
-      case BUTT_RIGHT:
-        if (tone_num >= 79 ){ 
-          Serial.println("");
-          Serial.println("Увы, буззер больше 5 кГц не смогёт...");
-          }
-         else {
-          tone_num++;
-          Serial.print("Сейчас частота буззера в герцах: ");
-          Serial.println(tones[tone_num]);
-         }
-         EEPROM.write(10, byte(tone_num));
-         key_tone = tones[tone_num];
-         tone(buzzer_pin, key_tone);
-         delay(key_speed*3);
-         noTone(buzzer_pin);
-        break;
-      default: eeprom_flag = false;   // если не распознали кнопку, не обновляем настройки!
-        break;
-    }
-    ir_flag = false;
-  }
-}
 
 
 String decode_it(String symbol_code) {
@@ -327,4 +265,87 @@ String decode_it(String symbol_code) {
   else if (symbol_code == "00101") { return "end"; }
 
   else { return symbol_code;}
+  }
+
+
+void settings(){
+    //butt1.tick();
+
+      if (digitalRead(dot_paddle) == LOW) {
+          if (flag_speed == true) {
+              if (key_speed >= 55){ 
+                key_speed = key_speed - 5;
+                Serial.println("");
+                Serial.print("Скорость увеличена, длительность точки теперь: ");
+                Serial.println(key_speed);
+                dot(); dot(); dot();
+              } else {
+                Serial.println("");
+                Serial.println("А ты сам-то угонисси? Давай без выебонов ;)");
+              }
+          } else if (flag_tone == true){
+              if (tone_num < 1 ){ 
+                  Serial.println("");
+                  Serial.println("Воу-воу, инфразвука нам не нать!");
+              } else {
+                  tone_num--;
+                  Serial.print("Сейчас частота буззера в герцах: ");
+                  Serial.println(tones[tone_num]);
+                  tone(buzzer_pin, tones[tone_num]); //Для самоконтроля нужно
+              }
+
+          }
+          
+      }
+
+      
+        if (digitalRead(dash_paddle) == LOW) {
+            if (flag_speed == true) {
+                if (key_speed <= 250){ 
+                    key_speed = key_speed + 5;
+                    Serial.println("");
+                    Serial.print("Скорость уменьшена, длительность точки теперь: ");
+                    Serial.println(key_speed);
+                    dot(); dot(); dot();
+                  } else {
+                    Serial.println("");
+                    Serial.println("Не дури, куда уж медленнее?");
+                  }
+            }else if (flag_tone == true) {
+                if (tone_num >= 79 ){ 
+                    Serial.println("");
+                    Serial.println("Увы, буззер больше 5 кГц не смогёт...");
+                } else {
+                    tone_num++;
+                    Serial.print("Сейчас частота буззера в герцах: ");
+                    Serial.println(tones[tone_num]);
+                    tone(buzzer_pin, tones[tone_num]); //Для самоконтроля нужно
+                }
+            }
+        }
+
+      
+      
+       //
+      key_tone = tones[tone_num];//Это для контроля настроек. Пищит по скорости и по тону, как есть. Обратная связь, кароч! 
+
+      
+    
+    /// выход из настроек
+    if (butt1.isHold() && settings_mode == true) {   // если кнопка удерживается
+      Serial.println("Сохраняем настройки");  
+      EEPROM.write(10, byte(tone_num));
+      EEPROM.write(20, byte(key_speed));
+      self_control = true; //Включаем буззер
+      keying = true; // Включаем ключевание обратно
+      
+      settings_mode = false;
+      for (int i=70; i>6; i--) {
+        tone(buzzer_pin,tones[i]);
+        delay (8);
+      }
+      noTone(buzzer_pin);
+      delay (300);
+   } 
+  
   }
