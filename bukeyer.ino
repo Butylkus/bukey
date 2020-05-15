@@ -56,6 +56,7 @@ void setup() {
   tone_num = int(EEPROM.read(10));
   key_tone = tones[tone_num]; // Тон буззера
   key_speed = int(EEPROM.read(20)); // Скорость ключевания
+  self_control = bool(EEPROM.read(30)); // Включен ли буззер в настройках?
   
   Serial.begin(9600);
 
@@ -72,6 +73,8 @@ void setup() {
   Serial.print("Длительность точки ");
   Serial.print(key_speed);
   Serial.println(" мс...");
+  Serial.print("Самоконтроль ");
+  if (self_control) { Serial.println("включен");} else { Serial.println("выключен");}
   Serial.println("Ключ готов к работе!");
   }
 
@@ -124,7 +127,8 @@ void loop() {
     tone_num = int(EEPROM.read(10));
     key_tone = tones[tone_num]; // ТОн буззера
     key_speed = int(EEPROM.read(20)); // Скорость ключевания
-    self_control = true; //Включаем буззер, ибо как ещё понять, чо там где?
+    //// EEPROM.read(30); - не читаем настройку, если окажется выключенным, то настроиться будет невозможно без ОС.
+    self_control = true; //Включаем буззер принудительно!
     keying = false; // Отключаем ключевание. Зачем в эфир гадить? =)
     Serial.println("Переходим в настройки");
     settings_mode = true;
@@ -154,6 +158,7 @@ void loop() {
       flag_speed = false;
       flag_tone = false;
       flag_buzzkey = true;
+      noTone(buzzer_pin);
       Serial.println("Настройка интерфейсов - передача вкл/выкл, самоконтроль вкл/выкл");
       }
       /*
@@ -294,7 +299,14 @@ void settings(){
                   tone(buzzer_pin, tones[tone_num]); //Для самоконтроля нужно
               }
 
-          }
+          } else if (flag_buzzkey == true){
+               Serial.println("Самоконтроля не будет, буззер выключен");
+               EEPROM.write(30, 0);
+               delay(100);
+          } 
+
+
+
           
       }
 
@@ -311,7 +323,7 @@ void settings(){
                     Serial.println("");
                     Serial.println("Не дури, куда уж медленнее?");
                   }
-            }else if (flag_tone == true) {
+            } else if (flag_tone == true) {
                 if (tone_num >= 79 ){ 
                     Serial.println("");
                     Serial.println("Увы, буззер больше 5 кГц не смогёт...");
@@ -321,7 +333,11 @@ void settings(){
                     Serial.println(tones[tone_num]);
                     tone(buzzer_pin, tones[tone_num]); //Для самоконтроля нужно
                 }
-            }
+            } else if (flag_buzzkey == true){
+               Serial.println("Самоконтроль есть, буззер включен");
+               EEPROM.write(30, 1);
+               delay(100);
+            } 
         }
 
       
@@ -336,7 +352,7 @@ void settings(){
       Serial.println("Сохраняем настройки");  
       EEPROM.write(10, byte(tone_num));
       EEPROM.write(20, byte(key_speed));
-      self_control = true; //Включаем буззер
+      //self_control = true; //Включаем буззер
       keying = true; // Включаем ключевание обратно
       
       settings_mode = false;
@@ -346,6 +362,7 @@ void settings(){
       }
       noTone(buzzer_pin);
       delay (300);
+      setup();
    } 
   
-  }
+}
