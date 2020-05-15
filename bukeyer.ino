@@ -159,7 +159,7 @@ void loop() {
       flag_tone = false;
       flag_buzzkey = true;
       noTone(buzzer_pin);
-      Serial.println("Настройка интерфейсов - передача вкл/выкл, самоконтроль вкл/выкл");
+      Serial.println("Настройка самоконтроля - вкл/выкл");
       }
       /*
    //Отладочная инфа
