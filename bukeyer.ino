@@ -1,21 +1,31 @@
-#include "pitches.h"
 #include <EEPROM.h>
-#include "GyverButton.h"
+#include <GyverEncoder.h>
 
-// Базовые настройки по умолчанию
-const int key_pin = 10; //пин, на который пойдёт + при воспроизведении
-const int dot_paddle = 3; //пин левого лепестка
-const int dash_paddle = 4; //пин правого лепестка
-const int buzzer_pin = 9; //пин бузера самоконтроля
-const int button_pin = 12; //Кнопка для настроек. из пина в землю!
 
-int key_tone = tones[35]; //тон для бузера самоконтроля. ноты идут по порядку согласно известным законам. По дефолту 440 (ля 4й октавы).
-byte key_speed = 100; //скорость в минус первой степени, она же длительность точки
+
+//////////////////////////////////////////////////
+////      Базовые настройки и умолчания     //////
+//////////////////////////////////////////////////
+
+const int key_pin = 12; //пин, на который пойдёт + при воспроизведении
+const int dot_paddle = 7; //пин левого лепестка
+const int dash_paddle = 6; //пин правого лепестка
+const int buzzer_pin = 2; //пин бузера самоконтроля
+
+
+const int left = 4;
+const int right = 5;
+const int buttenc = 3;
+
+int key_speed = 75; //скорость в минус первой степени, она же длительность точки
 
 bool self_control = true; // включить буззер самоконтроля? тру или фолс
 bool keying = true; // тру - режим ключа, фолс - "только писк", тренировка или чо там 
+bool test_mode = false; //тру - автоцикуляние ТЕСТ, фолс - ЦЩЦЩДЕ
 
 // Ещё пара переменных для внутреннего использования
+int menu = 0; //пункты меню
+int tone_mem; //тон сигнала буззера из памяти
 
 //Для перевода строк в компорте и распознавалки надо уметь считать паузы.
 //Это и есть переменные счётчика. Разница между ними больше стандартных пауз означает сигнал к распознаванию
@@ -29,21 +39,25 @@ bool settings_mode = false; //флаг режима настроек ключа
 //Переменная, которая распознаёт коды
 String symbol_code = "";
 
-//Переменная для номера тона буззера, номер элемента из файла pitches.
-byte tone_num;
 
 
-// флаг " ключ в режиме настройки". Нужен для работы кнопки
-bool flag_config = false;
-bool flag_speed = false;
-bool flag_tone = false;
-bool flag_buzzkey = false;
+//CQ CQ DE
+#define normalCQ dash(); dot(); dash(); dot(); play_pause(); dash(); dash(); dot(); dash(); play_space(); dash(); dot(); dash(); dot(); play_pause(); dash(); dash(); dot(); dash(); play_space(); dash(); dot(); dot(); play_pause() ; dot(); play_space();
+//R3PLN
+#define Callsign dot(); dash(); dot(); play_pause(); dot(); dot(); dot(); dash(); dash(); play_pause(); dot(); dash(); dash(); dot(); play_pause(); dot(); dash(); dot(); dot(); play_pause(); dash(); dot(); play_space();
+//PSE K
+#define CQinvite dot(); dash(); dash(); dot(); play_pause(); dot();dot();dot(); play_pause(); dot(); play_pause(); dash(); dot(); dash();
+//CQ TEST
+#define CQtest dash(); play_pause(); dot(); play_pause(); dot();dot();dot(); play_pause(); dash(); play_space();
 
 
 
-//Запускаем кнопульку...
-GButton butt1(button_pin);
 
+//Настраиваем энкодер...
+Encoder enc1(left, right, buttenc, TYPE2);
+
+
+int key_tone = 600; //тон для бузера самоконтроля. ноты идут по порядку согласно известным законам. По дефолту 440 (ля 4й октавы).
 
 
 void setup() {
@@ -53,29 +67,33 @@ void setup() {
   pinMode(dot_paddle, INPUT_PULLUP);
 
   //А теперь прочтём данные из постоянной памяти и используем их, если они есть.
-  tone_num = int(EEPROM.read(10));
-  key_tone = tones[tone_num]; // Тон буззера
-  key_speed = int(EEPROM.read(20)); // Скорость ключевания
-  self_control = bool(EEPROM.read(30)); // Включен ли буззер в настройках?
-  
-  Serial.begin(9600);
+  EEPROM.get(10, tone_mem);
+  byte key_speed_mem = byte(EEPROM.read(20)); // Скорость ключевания (на досуге переписать эту строку на гет)
+  EEPROM.get(30, self_control); // Включен ли буззер в настройках?
 
+  //Проверяем значения в памяти
+  if (tone_mem<400 or tone_mem>1500){
+    tone_mem = 600; // если значения номера нет в памяти или оно невменяемое, то ставим по умолчанию ЛЯ
+    }
+  key_tone = tone_mem; // Если значение нормальное, то принимаем настроенный тон
+    
+
+  if (key_speed_mem<18 or key_speed_mem>250){
+    key_speed = 75; // если скорость в памяти невменяемая, то ставим 75 мсек
+    }
+  else{
+    key_speed = key_speed_mem; // Если значение нормальное, то принимаем его
+    }
+
+  Serial.begin(9600);
   
-  butt1.setDebounce(30);        // настройка антидребезга (по умолчанию 80 мс)
-  butt1.setTimeout(300);        // настройка таймаута на удержание (по умолчанию 500 мс)
-  butt1.setClickTimeout(600);   // настройка таймаута между кликами (по умолчанию 300 мс)
-  butt1.setType(HIGH_PULL);
-  butt1.setDirection(NORM_OPEN);
-  Serial.println("Кнопка настройки запилена...");
-  Serial.print("Тональность ключа ");
-  Serial.print(key_tone);
-  Serial.println(" Гц...");
-  Serial.print("Длительность точки ");
-  Serial.print(key_speed);
-  Serial.println(" мс...");
-  Serial.print("Самоконтроль ");
-  if (self_control) { Serial.println("включен");} else { Serial.println("выключен");}
+//  Serial.print(key_tone);
+//  Serial.println(tone_mem);
+//  Serial.print(key_speed);
+//  Serial.print(key_speed_mem);
+//  if (self_control) { Serial.println("включен");} else { Serial.println("выключен");}
   Serial.println("Ключ готов к работе!");
+
   }
 
 
@@ -87,7 +105,7 @@ void dot() {
   if (keying) {digitalWrite(key_pin, 0);}
   noTone(buzzer_pin);
   delay(key_speed);
-  Serial.print("*");
+  //Serial.print("*");
   }
 
 void dash() {
@@ -97,15 +115,29 @@ void dash() {
   if (keying) {digitalWrite(key_pin, 0);}
   noTone(buzzer_pin);
   delay(key_speed);
-  Serial.print("-");
+  //Serial.print("-");
   }
 
 void play_pause() {
   delay(key_speed*3);
+  //Serial.println("");
   }
 
+void play_space() {
+  delay(key_speed*7);
+  //Serial.println(" ");
+  }
 
+void play_normal_cq() {
+  normalCQ
+  Callsign Callsign
+  CQinvite
+  }
 
+void play_test_cq() {
+  CQtest
+  Callsign
+  }
 
 
 
@@ -117,63 +149,42 @@ void loop() {
 //////////////////////////////////////////////////
 
   if (settings_mode == true) {
+    while (menu){
       settings();
+    }
   }
 
   // Переход в настройки, если мы в обычном режиме.
-  else if (butt1.isHold() && settings_mode == false) {
+  else if (enc1.isHolded() && settings_mode == false) {
 
   //Перечитаем для начала еепром
-    tone_num = int(EEPROM.read(10));
-    key_tone = tones[tone_num]; // ТОн буззера
-    key_speed = int(EEPROM.read(20)); // Скорость ключевания
+    EEPROM.get(10, key_tone); // Тон буззера
+    EEPROM.get(20, key_speed); // Тон буззера
+
     //// EEPROM.read(30); - не читаем настройку, если окажется выключенным, то настроиться будет невозможно без ОС.
     self_control = true; //Включаем буззер принудительно!
     keying = false; // Отключаем ключевание. Зачем в эфир гадить? =)
     Serial.println("Переходим в настройки");
     settings_mode = true;
-    for (int i=6; i<70; i++) {
-      tone(buzzer_pin,tones[i]);
-      delay (8);
+    //запиливаем характерный звук
+    for (int i=400; i<1500; i=i+2) {
+      tone(buzzer_pin,i);
+      delay (1);
     }
     noTone(buzzer_pin);
-    delay (300);
+    //переход в меню 1
+    menu = 1;  play_space(); play_space(); dot();
   }
 
-    //поднимаем флаги по кнопке
-    if (butt1.isSingle()) {
-      flag_speed = true;
-      flag_tone = false;
-      noTone(buzzer_pin);
-      flag_buzzkey = false;
-      Serial.println("Настройка скорости");
-    }
-    if (butt1.isDouble()) {
-      flag_speed = false;
-      flag_tone = true;
-      flag_buzzkey = false;
-      Serial.println("Настройка тона самоконтроля");
-      }
-    if (butt1.isTriple()) {
-      flag_speed = false;
-      flag_tone = false;
-      flag_buzzkey = true;
-      noTone(buzzer_pin);
-      Serial.println("Настройка самоконтроля - вкл/выкл");
-      }
-      /*
-   //Отладочная инфа
-  Serial.print(flag_speed); 
-  Serial.print(flag_tone);
-  Serial.println(flag_buzzkey);
-      */
+
 
 //////////////////////////////////////////////////
 /////// Основной рабочий цикл. Ключевание ////////
 //////////////////////////////////////////////////
 
+
+
 if (settings_mode == false) {
-  
   if (digitalRead(dot_paddle) == LOW or digitalRead(dash_paddle) == LOW) {
     sent_flag = false;
     if (counter > key_speed*3) {
@@ -211,8 +222,39 @@ if (settings_mode == false) {
 //////////////////////////////////////////////////
 ////// Служебные тики сторонних библиотек ////////
 //////////////////////////////////////////////////
-  butt1.tick();
+
+  enc1.tick(); //рабочий ход энкодера
+  
+  if (enc1.isDouble() and settings_mode == false){
+    Serial.println("Два клика - цикуляем");
+    if (test_mode) {play_test_cq();}
+    else{play_normal_cq();}
+  }
+  if (enc1.isSingle() and settings_mode == false){
+    Serial.println("Клик - даю позывной");
+    Callsign
+  }
+
+
+  if (settings_mode == false and enc1.isLeft() and key_speed < 252) {
+    //Serial.println("ТИК! WPM---");
+    key_speed = key_speed + 3;  
+    float wpm = 60000/(50*key_speed);
+    Serial.println(key_speed);
+    Serial.println(wpm);
+  }
+
+  if (settings_mode == false and enc1.isRight() and key_speed > 20) {
+    //Serial.println("ТИК! WPM---");
+    key_speed = key_speed - 3;
+    float wpm = 60000/(50*key_speed);
+    Serial.println(key_speed);
+    Serial.println(wpm);
+  }
+
 }
+
+
 
 
 
@@ -273,96 +315,131 @@ String decode_it(String symbol_code) {
   }
 
 
+
+
 void settings(){
-    //butt1.tick();
+/* Структура меню:
+1. Режим: ТЕСТ < > ОБЫЧНЫЙ
++2. Самоконтроль: выкл < > вкл
++3. Скорость: (перезапись в память)
++4. Тон: ниже < > выше
 
-      if (digitalRead(dot_paddle) == LOW) {
-          if (flag_speed == true) {
-              if (key_speed >= 55){ 
-                key_speed = key_speed - 5;
-                Serial.println("");
-                Serial.print("Скорость увеличена, длительность точки теперь: ");
-                Serial.println(key_speed);
-                dot(); dot(); dot();
-              } else {
-                Serial.println("");
-                Serial.println("А ты сам-то угонисси? Давай без выебонов ;)");
-              }
-          } else if (flag_tone == true){
-              if (tone_num < 1 ){ 
-                  Serial.println("");
-                  Serial.println("Воу-воу, инфразвука нам не нать!");
-              } else {
-                  tone_num--;
-                  Serial.print("Сейчас частота буззера в герцах: ");
-                  Serial.println(tones[tone_num]);
-                  tone(buzzer_pin, tones[tone_num]); //Для самоконтроля нужно
-              }
 
-          } else if (flag_buzzkey == true){
-               Serial.println("Самоконтроля не будет, буззер выключен");
-               EEPROM.write(30, 0);
-               delay(100);
-          } 
+*/
 
 
 
-          
+//Serial.println(menu);
+enc1.tick();
+
+  if (enc1.isRightH() and menu<4){
+    menu++;
+      for(int i=menu; i>0; i--){
+        dot();
       }
+    Serial.println(menu);
+  }
+  if (enc1.isLeftH() and menu>1){
+    menu--;
+      for(int i=menu; i>0; i--){
+        dot();
+      }
+    Serial.println(menu);
+  }
 
-      
-        if (digitalRead(dash_paddle) == LOW) {
-            if (flag_speed == true) {
-                if (key_speed <= 250){ 
-                    key_speed = key_speed + 5;
-                    Serial.println("");
-                    Serial.print("Скорость уменьшена, длительность точки теперь: ");
-                    Serial.println(key_speed);
-                    dot(); dot(); dot();
-                  } else {
-                    Serial.println("");
-                    Serial.println("Не дури, куда уж медленнее?");
-                  }
-            } else if (flag_tone == true) {
-                if (tone_num >= 79 ){ 
-                    Serial.println("");
-                    Serial.println("Увы, буззер больше 5 кГц не смогёт...");
-                } else {
-                    tone_num++;
-                    Serial.print("Сейчас частота буззера в герцах: ");
-                    Serial.println(tones[tone_num]);
-                    tone(buzzer_pin, tones[tone_num]); //Для самоконтроля нужно
-                }
-            } else if (flag_buzzkey == true){
-               Serial.println("Самоконтроль есть, буззер включен");
-               EEPROM.write(30, 1);
-               delay(100);
-            } 
-        }
+//Переключение режимов
+  if (settings_mode and menu==1 and enc1.isRight()) {
+    Serial.print("ТЕСТ");
+    test_mode = true;
+    CQtest
+  }
+  if (settings_mode and menu==1 and enc1.isLeft()) {
+    Serial.print("НОРМ");
+    test_mode = false;
+    dash(); dot(); dash(); dot(); play_pause(); dash(); dash(); dot(); dash();
+  }
 
-      
-      
-       //
-      key_tone = tones[tone_num];//Это для контроля настроек. Пищит по скорости и по тону, как есть. Обратная связь, кароч! 
 
-      
-    
-    /// выход из настроек
-    if (butt1.isHold() && settings_mode == true) {   // если кнопка удерживается
-      Serial.println("Сохраняем настройки");  
-      EEPROM.write(10, byte(tone_num));
-      EEPROM.write(20, byte(key_speed));
-      //self_control = true; //Включаем буззер
-      keying = true; // Включаем ключевание обратно
-      
-      settings_mode = false;
-      for (int i=70; i>6; i--) {
-        tone(buzzer_pin,tones[i]);
-        delay (8);
+//Самоконтроль, включение-выключение буззера. 
+  if (settings_mode and menu==2 and enc1.isRight()) {
+    self_control = true;
+    dot(); dash();
+    Serial.print("Буззер включен");
+  }
+  if (settings_mode and menu==2 and enc1.isLeft()) {
+    dash(); dot();
+    self_control = false;
+    Serial.print("Буззер выключен");
+  }
+  
+//Скорость ключевания в памяти
+  if (settings_mode and menu==3 and enc1.isRight()) {
+    if (key_speed > 21){ 
+      key_speed = key_speed - 1;
+      Serial.print("Скорость увеличена до ");
+      Serial.println(key_speed);
+    } else {
+      Serial.println("Придержи коней, ковбой!");
+    }
+  }
+  if (settings_mode and menu==3 and enc1.isLeft()) {
+    if (key_speed < 250){ 
+      key_speed = key_speed + 1;
+      Serial.print("Скорость уменьшена до ");
+      Serial.println(key_speed);
+    } else {
+      Serial.println("Ну нельзя так слоупочить!");
+    }
+  }
+  
+//Тест скорости из памяти - надо нажать энкодер.
+  if (settings_mode and menu==3 and enc1.isSingle()) {
+    Callsign
+  }
+
+//Тон самоконтроля в памяти
+  if (settings_mode and menu==4 and enc1.isRight() and key_tone < 1501) {
+     if (key_tone > 1500 ){
+        Serial.println("Комаров мало?");
+     } else {
+        key_tone = key_tone + 10 ;
+        Serial.print("Частота буззера: ");
+        Serial.println(key_tone);
+        tone(buzzer_pin, key_tone); //Для самоконтроля нужно
+        delay(20); // Чтоб слишком быстро не менялись ноты
+     }
+  }
+  if (settings_mode and menu==4 and enc1.isLeft() and key_tone > 399) {
+     if (key_tone < 400 ){
+        Serial.println("Воу-воу, инфразвука нам не нать!");
+     } else {
+        key_tone = key_tone - 10 ;
+        Serial.print("Частота буззера: ");
+        Serial.println(key_tone);
+        tone(buzzer_pin, key_tone); //Для самоконтроля нужно
+        delay(20); // Чтоб слишком быстро не менялись ноты
+     }
+  }
+
+
+
+
+  
+  if (enc1.isHolded() && settings_mode == true) {   // если кнопка удерживается
+    Serial.println("Сохраняем настройки"); 
+    EEPROM.put(10, key_tone);
+    EEPROM.put(20, key_speed);
+    EEPROM.put(30, self_control);
+    settings_mode = false;
+    menu = 0;
+    keying = true; // Включаем ключевание обратно
+    for (int i=1500; i>400; i--) {
+      tone(buzzer_pin,i);
+      delay (1);
       }
       noTone(buzzer_pin);
-      delay (300);
-      setup();
-   } 
-  
+    setup();
+  }
+
 }
+      
