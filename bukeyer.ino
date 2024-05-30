@@ -2,20 +2,28 @@
 #include <GyverEncoder.h>
 
 
+//////////////////////////////////////////////////
+////                BuKeyer                 //////
+////              ver. 240530               //////
+////             Author: R3PLN              //////
+////          https://t.me/butpub           //////
+//////////////////////////////////////////////////
+
+
 
 //////////////////////////////////////////////////
 ////      Базовые настройки и умолчания     //////
 //////////////////////////////////////////////////
 
-const int key_pin = 12; //пин, на который пойдёт + при воспроизведении
-const int dot_paddle = 7; //пин левого лепестка
+const int key_pin = 13; //пин, на который пойдёт + при воспроизведении
+const int dot_paddle = 5; //пин левого лепестка
 const int dash_paddle = 6; //пин правого лепестка
-const int buzzer_pin = 2; //пин бузера самоконтроля
+const int buzzer_pin = 9; //пин бузера самоконтроля
 
 
-const int left = 4;
-const int right = 5;
-const int buttenc = 3;
+const int left = 3;
+const int right = 2;
+const int buttenc = 4;
 
 int key_speed = 75; //скорость в минус первой степени, она же длительность точки
 
@@ -36,6 +44,11 @@ unsigned long counter; // это просто разница между ними
 bool sent_flag = false; // флаг "послано в порт", чтобы не срать в порт постоянно
 bool settings_mode = false; //флаг режима настроек ключа
 
+bool sending = false; //флаг "сейчас идёт сигнал"
+bool pausing = false; //флаг "пауза между сигналами"
+unsigned long send_timer; //таймер передачи сигналов
+
+
 //Переменная, которая распознаёт коды
 String symbol_code = "";
 
@@ -43,12 +56,12 @@ String symbol_code = "";
 
 //CQ CQ DE
 #define normalCQ dash(); dot(); dash(); dot(); play_pause(); dash(); dash(); dot(); dash(); play_space(); dash(); dot(); dash(); dot(); play_pause(); dash(); dash(); dot(); dash(); play_space(); dash(); dot(); dot(); play_pause() ; dot(); play_space();
-//R3PLN
-#define Callsign dot(); dash(); dot(); play_pause(); dot(); dot(); dot(); dash(); dash(); play_pause(); dot(); dash(); dash(); dot(); play_pause(); dot(); dash(); dot(); dot(); play_pause(); dash(); dot(); play_space();
+//UB3PEQ
+#define Callsign dot(); dot(); dash(); play_pause();  dash(); dot();  dot(); dot(); play_pause(); dot(); dot(); dot(); dash(); dash(); play_pause();    dot(); dash(); dash(); dot(); play_pause(); dot(); play_pause(); dash(); dash(); dot(); dash(); play_space();
 //PSE K
 #define CQinvite dot(); dash(); dash(); dot(); play_pause(); dot();dot();dot(); play_pause(); dot(); play_pause(); dash(); dot(); dash();
-//CQ TEST
-#define CQtest dash(); play_pause(); dot(); play_pause(); dot();dot();dot(); play_pause(); dash(); play_space();
+//TEST
+#define CQtest dash(); play_pause(); dot(); play_pause(); dot();dot();dot(); play_pause(); dash();
 
 
 
@@ -73,7 +86,7 @@ void setup() {
 
   //Проверяем значения в памяти
   if (tone_mem<400 or tone_mem>1500){
-    tone_mem = 600; // если значения номера нет в памяти или оно невменяемое, то ставим по умолчанию ЛЯ
+    tone_mem = 600; // если значения номера нет в памяти или оно невменяемое, то ставим по умолчанию
     }
   key_tone = tone_mem; // Если значение нормальное, то принимаем настроенный тон
     
@@ -84,8 +97,10 @@ void setup() {
   else{
     key_speed = key_speed_mem; // Если значение нормальное, то принимаем его
     }
-
+  
+  
   Serial.begin(9600);
+
   
 //  Serial.print(key_tone);
 //  Serial.println(tone_mem);
@@ -94,6 +109,10 @@ void setup() {
 //  if (self_control) { Serial.println("включен");} else { Serial.println("выключен");}
   Serial.println("Ключ готов к работе!");
 
+
+
+
+  
   }
 
 
@@ -118,25 +137,50 @@ void dash() {
   //Serial.print("-");
   }
 
+//Пауза между символами (три точки)
 void play_pause() {
-  delay(key_speed*3);
+  sending = false;
+  pausing = true;
+  send_timer = millis();
+  while (pausing == true){
+    if ((millis() - send_timer) < key_speed*2){
+      pausing = true;
+      sending = false;
+      }
+    else{
+      pausing = false;
+      sending = false;
+      }
+  }
   //Serial.println("");
-  }
+}
 
+//пауза между слвоами (семь точек)
 void play_space() {
-  delay(key_speed*7);
-  //Serial.println(" ");
+  sending = false;
+  pausing = true;
+  send_timer = millis();
+  while (pausing == true){
+    if ((millis() - send_timer) < key_speed*6){
+      pausing = true;
+      }
+    else{
+        pausing = false;
+      }
   }
+  //Serial.println("");
+}
+
 
 void play_normal_cq() {
-  normalCQ
-  Callsign Callsign
-  CQinvite
+    normalCQ
+    Callsign Callsign
+    CQinvite
   }
 
 void play_test_cq() {
-  CQtest
-  Callsign
+    Callsign
+    CQtest
   }
 
 
@@ -147,6 +191,8 @@ void loop() {
 //////////////////////////////////////////////////
 //// Тут проверяется и происходит настройка //////
 //////////////////////////////////////////////////
+
+
 
   if (settings_mode == true) {
     while (menu){
@@ -237,7 +283,7 @@ if (settings_mode == false) {
 
 
   if (settings_mode == false and enc1.isLeft() and key_speed < 252) {
-    //Serial.println("ТИК! WPM---");
+    Serial.println("ТИК! WPM---");
     key_speed = key_speed + 3;  
     float wpm = 60000/(50*key_speed);
     Serial.println(key_speed);
@@ -245,7 +291,7 @@ if (settings_mode == false) {
   }
 
   if (settings_mode == false and enc1.isRight() and key_speed > 20) {
-    //Serial.println("ТИК! WPM---");
+    Serial.println("ТИК! WPM---");
     key_speed = key_speed - 3;
     float wpm = 60000/(50*key_speed);
     Serial.println(key_speed);
@@ -253,6 +299,10 @@ if (settings_mode == false) {
   }
 
 }
+
+
+
+
 
 
 
@@ -319,7 +369,7 @@ String decode_it(String symbol_code) {
 
 void settings(){
 /* Структура меню:
-1. Режим: ТЕСТ < > ОБЫЧНЫЙ
++1. Режим: CQ < > TEST
 +2. Самоконтроль: выкл < > вкл
 +3. Скорость: (перезапись в память)
 +4. Тон: ниже < > выше
@@ -376,6 +426,7 @@ enc1.tick();
   if (settings_mode and menu==3 and enc1.isRight()) {
     if (key_speed > 21){ 
       key_speed = key_speed - 1;
+      dot();dot();dot();
       Serial.print("Скорость увеличена до ");
       Serial.println(key_speed);
     } else {
@@ -385,6 +436,7 @@ enc1.tick();
   if (settings_mode and menu==3 and enc1.isLeft()) {
     if (key_speed < 250){ 
       key_speed = key_speed + 1;
+      dot();dot();dot();
       Serial.print("Скорость уменьшена до ");
       Serial.println(key_speed);
     } else {
